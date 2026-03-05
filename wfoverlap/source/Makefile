@@ -34,7 +34,7 @@
 #STATIC = -static-intel -qopenmp-link=static
 PROFILE = # -pg
 OMP = -qopenmp
-FC = ifx
+FC = ifort
 DEBUG = #-g #-warn all # -traceback -check bounds
 OPT = -O3 -ipo
 FCFLAGS = $(OPT) $(OMP) $(PROFILE) $(DEBUG) -fpp -i8 -DEXTBLAS   -I"${MKLROOT}/include" -z muldefs
@@ -43,7 +43,7 @@ LINKFLAGS = $(STATIC) $(PROFILE)
 # openmp (multithreaded) compilation
 #LALIB =  -Wl,--start-group ${MKLROOT}/lib/intel64/libmkl_intel_ilp64.a ${MKLROOT}/lib/intel64/libmkl_core.a ${MKLROOT}/lib/intel64/libmkl_intel_thread.a -Wl,--end-group -lpthread -lm -ldl
 #LALIB  = -Wl,--start-group $(MKLROOT)/lib/intel64/libmkl_intel_ilp64.a $(MKLROOT)/lib/intel64/libmkl_sequential.a $(MKLROOT)/lib/intel64/libmkl_core.a -Wl,--end-group -lm
-LALIB  =  -Wl,--start-group ${MKLROOT}/lib/libmkl_intel_ilp64.a ${MKLROOT}/lib/libmkl_intel_thread.a ${MKLROOT}/lib/libmkl_core.a -Wl,--end-group -liomp5 -lpthread -lm -ldl
+LALIB = -Wl,--start-group ${MKLROOT}/lib/intel64/libmkl_intel_ilp64.a ${MKLROOT}/lib/intel64/libmkl_intel_thread.a ${MKLROOT}/lib/intel64/libmkl_core.a -Wl,--end-group -liomp5 -lpthread -lm -ldl
 
 
 
