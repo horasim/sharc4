@@ -115,7 +115,7 @@ class SHARC_SPAINN(SHARC_FAST):
         return f"{SHARC_SPAINN._name}\n{SHARC_SPAINN._description}"
 
     def get_features(self, KEYSTROKES: TextIOWrapper | None = None) -> set[str]:
-        """return availble features
+        """return available features
 
         ---
         Parameters:

@@ -109,7 +109,7 @@ class SHARC_SGDML(SHARC_FAST):
         return f"{SHARC_SGDML._name}\n{SHARC_SGDML._description}"
 
     def get_features(self, KEYSTROKES: TextIOWrapper | None = None) -> set[str]:
-        """return availble features
+        """return available features
 
         ---
         Parameters:
@@ -175,6 +175,9 @@ class SHARC_SGDML(SHARC_FAST):
             self.log.warning("max_memory not specified in SGDML.resources, using default.")
             self.QMin.resources["max_memory"] = None  # or set a default value
 
+    def read_template(self, template_file="SGDML.template", kw_whitelist=None):
+        return super().read_template(template_file, kw_whitelist)
+
     def setup_interface(self):
         super().setup_interface()
         max_memory = self.QMin.resources.get("max_memory", None)
@@ -187,7 +190,11 @@ class SHARC_SGDML(SHARC_FAST):
             max_memory=max_memory,
         )
 
-    
+    def create_restart_files(self):
+        pass
+
+    def run(self):
+        pass
 
     def getQMout(self):
         requests = set()
@@ -202,20 +209,20 @@ class SHARC_SGDML(SHARC_FAST):
             npc = self.QMin.molecule["npc"],
             requests = requests
         )
-        print("DEBUG: Shape of R", self.QMin.coords["coords"].shape , flush=True)
+        self.log.debug("Shape of R %s", self.QMin.coords["coords"].shape)
         prediction_s0 = self.GDMLpredict_s0.predict(self.QMin.coords["coords"].reshape(1, -1))
         prediction_s1 = self.GDMLpredict_s1.predict(self.QMin.coords["coords"].reshape(1, -1))
         if self.QMin.requests["h"]:
             prediction_energy = [[prediction_s0[0], 0], [0, prediction_s1[0]]]
             self.QMout["h"] = np.asarray(prediction_energy)
-            print("DEBUG: Predicted energies:", np.asarray(prediction_energy), flush=True)
-            print("DEBUG: Shape of predicted energies:", np.asarray(prediction_energy).shape, flush=True)
+            self.log.debug("Predicted energies: %s", np.asarray(prediction_energy))
+            self.log.debug("Shape of predicted energies: %s", np.asarray(prediction_energy).shape)
 
         if self.QMin.requests["grad"]:
-            prediction_grad = [-prediction_s0[1].reshape(1,10,3), -prediction_s1[1].reshape(1,10,3)]
+            prediction_grad = [-prediction_s0[1].reshape(1,self.QMin.molecule["natom"],3), -prediction_s1[1].reshape(1,self.QMin.molecule["natom"],3)]
             self.QMout["grad"] = np.asarray(prediction_grad)
-            print("DEBUG: Predicted gradients:", np.asarray(prediction_grad), flush=True)
-            print("DEBUG: Shape of predicted gradients:", np.asarray(prediction_grad).shape, flush=True)
+            self.log.debug("Predicted gradients: %s", np.asarray(prediction_grad))
+            self.log.debug("Shape of predicted gradients: %s", np.asarray(prediction_grad).shape)
 
         self.QMout["runtime"] = self.clock.measuretime(False)
         return self.QMout
