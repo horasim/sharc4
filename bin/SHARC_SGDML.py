@@ -33,6 +33,7 @@ from io import TextIOWrapper
 import numpy as np
 from SHARC_FAST import SHARC_FAST
 from sgdml.predict import GDMLPredict
+from constants import au2eV, HARTREE_TO_EV, BOHR_TO_ANG
 from utils import expand_path, link, question
 
 __all__ = ["SHARC_SGDML"]
@@ -51,6 +52,7 @@ all_features = set(
     [
         "h",
         "grad",
+        "dm",  # dipole moments - returning dummy values since SGDML doesn't provide them
     ]
 )
 
@@ -69,16 +71,19 @@ class SHARC_SGDML(SHARC_FAST):
         super().__init__(*args, **kwargs)
 
         # Add resource keys
-        self.QMin.resources.update({"modelpath": None})
-        self.QMin.resources.types.update({"modelpath": str})
+        self.QMin.resources.update({"modelpath": None, "modelpath_s0": None, "modelpath_s1": None, "max_memory": None})
+        self.QMin.resources.types.update({"modelpath": str, "modelpath_s0": str, "modelpath_s1": str, "max_memory": int})
 
         # Add template keys
-        self.QMin.template.update({"cutoff": 10.0, "nac_key": "smooth_nacs", "properties": ["energy", "forces"]})
-        self.QMin.template.types.update({"cutoff": float, "nac_key": str, "properties": list})
+        self.QMin.template.update({"cutoff": 10.0, "nac_key": "smooth_nacs", "properties": ["energy", "forces"], 
+                                   "energy_ref_s0": 0.0, "energy_ref_s1": 0.0})
+        self.QMin.template.types.update({"cutoff": float, "nac_key": str, "properties": list, 
+                                         "energy_ref_s0": float, "energy_ref_s1": float})
 
         self.GDMLpredict = None
         self._resources_file = None
         self._template_file = None
+        self.energy_reference = {"s0": 0.0, "s1": 0.0}  # Energy reference in eV
     
     @staticmethod
     def version() -> str:
@@ -146,7 +151,7 @@ class SHARC_SGDML(SHARC_FAST):
             self.log.info(f"{'SGDML resource usage':-^60}\n")
             self.setupINFOS["modelpath_s0"] = question("Specify path to sGDML model for state 0: ", str, KEYSTROKES=KEYSTROKES)
             self.setupINFOS["modelpath_s1"] = question("Specify path to sGDML model for state 1: ", str, KEYSTROKES=KEYSTROKES)
-            self.setupINFOS["max_memory"] = question("Specify max_memory (in MB) for sGDML: ", int, KEYSTROKES=KEYSTROKES, default=None)
+            self.setupINFOS["max_memory"] = question("Specify max_memory (in MB) for sGDML: ", int, KEYSTROKES=KEYSTROKES, default=20000)
 
         return INFOS
 
@@ -170,13 +175,30 @@ class SHARC_SGDML(SHARC_FAST):
 
         # Read max_memory from resources
         if "max_memory" in self.QMin.resources:
-            self.QMin.resources["max_memory"] = int(self.QMin.resources["max_memory"])
+            max_mem_value = self.QMin.resources["max_memory"]
+            # Handle both plain integer and bracketed format
+            if isinstance(max_mem_value, str) and max_mem_value.startswith('[') and max_mem_value.endswith(']'):
+                max_mem_value = int(max_mem_value.strip('[]'))
+            else:
+                max_mem_value = int(max_mem_value)
+            self.QMin.resources["max_memory"] = max_mem_value
         else:
             self.log.warning("max_memory not specified in SGDML.resources, using default.")
             self.QMin.resources["max_memory"] = None  # or set a default value
 
     def read_template(self, template_file="SGDML.template", kw_whitelist=None):
-        return super().read_template(template_file, kw_whitelist)
+        result = super().read_template(template_file, kw_whitelist)
+        
+        # Read energy reference values if provided in template
+        if "energy_ref_s0" in self.QMin.template:
+            self.energy_reference["s0"] = self.QMin.template["energy_ref_s0"]
+            self.log.info(f"Using energy reference for S0: {self.energy_reference['s0']} eV")
+        
+        if "energy_ref_s1" in self.QMin.template:
+            self.energy_reference["s1"] = self.QMin.template["energy_ref_s1"]
+            self.log.info(f"Using energy reference for S1: {self.energy_reference['s1']} eV")
+        
+        return result
 
     def setup_interface(self):
         super().setup_interface()
@@ -209,20 +231,77 @@ class SHARC_SGDML(SHARC_FAST):
             npc = self.QMin.molecule["npc"],
             requests = requests
         )
-        self.log.debug("Shape of R %s", self.QMin.coords["coords"].shape)
+        self.log.info("Shape of R %s", self.QMin.coords["coords"].shape)
+        self.log.info("Coordinates (R) for prediction:\n%s", self.QMin.coords["coords"])
         prediction_s0 = self.GDMLpredict_s0.predict(self.QMin.coords["coords"].reshape(1, -1))
         prediction_s1 = self.GDMLpredict_s1.predict(self.QMin.coords["coords"].reshape(1, -1))
+        
+        # Log raw SGDML predictions (using info level to ensure visibility)
+        s0_energy_hartree = prediction_s0[0]
+        s1_energy_hartree = prediction_s1[0]
+        self.log.info("SGDML s0 prediction - Energy: %f Hartree, Force shape: %s", 
+                      s0_energy_hartree, prediction_s0[1].shape if len(prediction_s0) > 1 else "N/A")
+        self.log.info("SGDML s1 prediction - Energy: %f Hartree, Force shape: %s", 
+                      s1_energy_hartree, prediction_s1[1].shape if len(prediction_s1) > 1 else "N/A")
+        
+        # Convert energies to eV for logging
+        s0_energy_ev = s0_energy_hartree * HARTREE_TO_EV
+        s1_energy_ev = s1_energy_hartree * HARTREE_TO_EV
+        self.log.info("Converted energies - S0: %f eV, S1: %f eV", s0_energy_ev, s1_energy_ev)
+        
         if self.QMin.requests["h"]:
-            prediction_energy = [[prediction_s0[0], 0], [0, prediction_s1[0]]]
-            self.QMout["h"] = np.asarray(prediction_energy)
-            self.log.debug("Predicted energies: %s", np.asarray(prediction_energy))
-            self.log.debug("Shape of predicted energies: %s", np.asarray(prediction_energy).shape)
+            # SGDML returns energies in Hartree, convert to eV and add reference
+            # Set diagonal elements of the pre-allocated Hamiltonian matrix
+            # State 0 energy (first state) with reference
+            final_s0_energy = s0_energy_ev + self.energy_reference["s0"]
+            self.QMout["h"][0, 0] = final_s0_energy
+            
+            # State 1 energy (second state) with reference - this depends on your state mapping
+            nmstates = sum((i + 1) * n for i, n in enumerate(self.QMin.molecule["states"]))
+            if nmstates > 1:
+                final_s1_energy = s1_energy_ev + self.energy_reference["s1"]
+                self.QMout["h"][1, 1] = final_s1_energy
+            
+            # Log the energy components
+            self.log.info("Energy components - S0: ML=%f eV + ref=%f eV = %f eV", 
+                         s0_energy_ev, self.energy_reference["s0"], final_s0_energy)
+            if nmstates > 1:
+                self.log.info("Energy components - S1: ML=%f eV + ref=%f eV = %f eV", 
+                             s1_energy_ev, self.energy_reference["s1"], final_s1_energy)
+            
+            # Log the actual Hamiltonian values being set
+            self.log.info("Hamiltonian diagonal set to - S0: %f eV, S1: %f eV", 
+                         self.QMout["h"][0, 0], self.QMout["h"][1, 1] if nmstates > 1 else 0)
+            self.log.info("Full H matrix:\n%s", self.QMout["h"])
 
         if self.QMin.requests["grad"]:
-            prediction_grad = [-prediction_s0[1].reshape(1,self.QMin.molecule["natom"],3), -prediction_s1[1].reshape(1,self.QMin.molecule["natom"],3)]
-            self.QMout["grad"] = np.asarray(prediction_grad)
-            self.log.debug("Predicted gradients: %s", np.asarray(prediction_grad))
-            self.log.debug("Shape of predicted gradients: %s", np.asarray(prediction_grad).shape)
+            # Gradients should have shape (nmstates, natom, 3)
+            # SGDML returns forces in Hartree/Bohr, SHARC expects eV/Å
+            # Conversion: 1 Hartree/Bohr = HARTREE_TO_EV / BOHR_TO_ANG eV/Å
+            nmstates = sum((i + 1) * n for i, n in enumerate(self.QMin.molecule["states"]))
+            natom = self.QMin.molecule["natom"]
+            
+            grad_array = np.zeros((nmstates, natom, 3), dtype=float)
+            
+            # State 0 gradients - convert from Hartree/Bohr to eV/Å
+            # Note: SGDML returns forces (negative gradients), so we negate to get gradients
+            if nmstates > 0:
+                grad_array[0, :, :] = -prediction_s0[1].reshape(natom, 3) * (HARTREE_TO_EV / BOHR_TO_ANG)
+            
+            # State 1 gradients (if we have at least 2 states)
+            if nmstates > 1:
+                grad_array[1, :, :] = -prediction_s1[1].reshape(natom, 3) * (HARTREE_TO_EV / BOHR_TO_ANG)
+            
+            self.QMout["grad"] = grad_array
+            self.log.debug("Predicted gradients (eV/A): %s", grad_array)
+            self.log.debug("Shape of predicted gradients: %s", grad_array.shape)
+
+        # SGDML doesn't provide dipole moments, so return zeros
+        if self.QMin.requests["dm"]:
+            # dm should have shape (3, nmstates, nmstates) where nmstates = sum((i+1)*n for i,n in enumerate(states))
+            nmstates = sum((i + 1) * n for i, n in enumerate(self.QMin.molecule["states"]))
+            self.QMout["dm"] = np.zeros((3, nmstates, nmstates), dtype=float)
+            self.log.warning("SGDML interface: returning dummy zero values for dipole moments")
 
         self.QMout["runtime"] = self.clock.measuretime(False)
         return self.QMout
