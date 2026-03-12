@@ -244,43 +244,36 @@ class SHARC_SGDML(SHARC_FAST):
         prediction_s1 = self.GDMLpredict_s1.predict(coords_angstrom.reshape(1, -1))
         
         # Log raw SGDML predictions (using info level to ensure visibility)
-        s0_energy_hartree = prediction_s0[0]
-        s1_energy_hartree = prediction_s1[0]
+        s0_energy_eV = prediction_s0[0]
+        s1_energy_eV = prediction_s1[0]
         self.log.info("SGDML s0 prediction - Energy: %f eV, Force shape: %s", 
-                      s0_energy_hartree, prediction_s0[1].shape if len(prediction_s0) > 1 else "N/A")
+                      s0_energy_eV, prediction_s0[1].shape if len(prediction_s0) > 1 else "N/A")
         self.log.info("SGDML s1 prediction - Energy: %f eV, Force shape: %s", 
-                      s1_energy_hartree, prediction_s1[1].shape if len(prediction_s1) > 1 else "N/A")
+                      s1_energy_eV, prediction_s1[1].shape if len(prediction_s1) > 1 else "N/A")
         
         # SGDML returns energies in eV, but SHARC expects Hartree (atomic units)
         # Convert eV → Hartree using au2eV constant
-        s0_energy_hartree = s0_energy_hartree  # SGDML output in eV
-        s1_energy_hartree = s1_energy_hartree  # SGDML output in eV
+        s0_energy_hartree = s0_energy_eV / au2eV
+        s1_energy_hartree = s1_energy_eV / au2eV
+        nmstates = sum((i + 1) * n for i, n in enumerate(self.QMin.molecule["states"]))
         
-        # Convert to Hartree for SHARC
-        s0_energy_hartree_sharc = s0_energy_hartree / au2eV
-        s1_energy_hartree_sharc = s1_energy_hartree / au2eV
-        
-        self.log.info("SGDML energies (eV) - S0: %f eV, S1: %f eV", s0_energy_hartree, s1_energy_hartree)
-        self.log.info("Converted to Hartree for SHARC - S0: %f, S1: %f", s0_energy_hartree_sharc, s1_energy_hartree_sharc)
+        self.log.info("SGDML energies (eV) - S0: %f eV, S1: %f eV", s0_energy_eV, s1_energy_eV)
+        self.log.info("Converted to Hartree for SHARC - S0: %f, S1: %f", s0_energy_hartree, s1_energy_hartree)
         
         if self.QMin.requests["h"]:
-            # SHARC expects energies in Hartree, add energy reference in Hartree
-            # State 0 energy (first state) with reference
-            final_s0_energy = s0_energy_hartree_sharc + (self.energy_reference["s0"] / au2eV)
-            self.QMout["h"][0, 0] = final_s0_energy
+            s0_energy_hartree 
+            self.QMout["h"][0, 0] = s0_energy_hartree
             
             # State 1 energy (second state) with reference - this depends on your state mapping
-            nmstates = sum((i + 1) * n for i, n in enumerate(self.QMin.molecule["states"]))
             if nmstates > 1:
-                final_s1_energy = s1_energy_hartree_sharc + (self.energy_reference["s1"] / au2eV)
-                self.QMout["h"][1, 1] = final_s1_energy
+                self.QMout["h"][1, 1] = s1_energy_hartree
             
             # Log the energy components
             self.log.info("Energy components - S0: ML=%f eV + ref=%f eV = %f Hartree", 
-                         s0_energy_hartree, self.energy_reference["s0"], final_s0_energy)
+                         s0_energy_eV, self.energy_reference["s0"], s0_energy_hartree)
             if nmstates > 1:
                 self.log.info("Energy components - S1: ML=%f eV + ref=%f eV = %f Hartree", 
-                             s1_energy_hartree, self.energy_reference["s1"], final_s1_energy)
+                             s1_energy_eV, self.energy_reference["s1"], s1_energy_hartree)
             
             # Log the actual Hamiltonian values being set
             self.log.info("Hamiltonian diagonal set to - S0: %f Hartree, S1: %f Hartree", 
@@ -291,14 +284,13 @@ class SHARC_SGDML(SHARC_FAST):
             # Gradients should have shape (nmstates, natom, 3)
             # SGDML returns FORCES in eV/Å, SHARC expects GRADIENTS in Hartree/Bohr
             # Convert: (eV/Å) → (Hartree/Bohr) and negate (force → gradient)
-            nmstates = sum((i + 1) * n for i, n in enumerate(self.QMin.molecule["states"]))
             natom = self.QMin.molecule["natom"]
             
             grad_array = np.zeros((nmstates, natom, 3), dtype=float)
             
             # Conversion factor: (eV/Å) → (Hartree/Bohr)
-            # 1 eV/Å = (1/au2eV) * (1/au2a) Hartree/Bohr
-            ev_per_angstrom_to_hartree_per_bohr = 1.0 / (au2eV * au2a)
+            # 1 eV/Å = au2ev/au2a Hartree/Bohr
+            ev_per_angstrom_to_hartree_per_bohr = au2a / au2eV
             
             # State 0: Convert forces → gradients with unit conversion and negation
             if nmstates > 0:
