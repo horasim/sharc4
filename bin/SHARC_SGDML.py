@@ -232,9 +232,16 @@ class SHARC_SGDML(SHARC_FAST):
             requests = requests
         )
         self.log.info("Shape of R %s", self.QMin.coords["coords"].shape)
-        self.log.info("Coordinates (R) for prediction:\n%s", self.QMin.coords["coords"])
-        prediction_s0 = self.GDMLpredict_s0.predict(self.QMin.coords["coords"].reshape(1, -1))
-        prediction_s1 = self.GDMLpredict_s1.predict(self.QMin.coords["coords"].reshape(1, -1))
+        self.log.info("Original coordinates (Bohr):\n%s", self.QMin.coords["coords"])
+        
+        # Convert coordinates from Bohr to Angstrom for SGDML
+        # SGDML expects Angstrom, SHARC provides Bohr
+        coords_angstrom = self.QMin.coords["coords"] * BOHR_TO_ANG
+        
+        self.log.info("Converted coordinates (Angstrom):\n%s", coords_angstrom)
+        
+        prediction_s0 = self.GDMLpredict_s0.predict(coords_angstrom.reshape(1, -1))
+        prediction_s1 = self.GDMLpredict_s1.predict(coords_angstrom.reshape(1, -1))
         
         # Log raw SGDML predictions (using info level to ensure visibility)
         s0_energy_hartree = prediction_s0[0]
